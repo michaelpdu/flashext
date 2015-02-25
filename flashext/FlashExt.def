@@ -1,0 +1,15 @@
+LIBRARY "FLASHEXT.DLL"
+
+EXPORTS
+    WinDbgExtensionDllInit
+    ExtensionApiVersion
+    base
+    tjit
+	wtjit
+    bpjit
+    lnjit
+    dump
+    loglevel
+	test
+    debug
+    help
