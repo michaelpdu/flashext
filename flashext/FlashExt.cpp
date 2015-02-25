@@ -127,7 +127,7 @@ DECLARE_API (help)
 	<< "!tjit               - Trace JIT functions" << std::endl
 	<< "!bpjit <method_name> [<condition>]" << std::endl
     << "                    - Set breakpoint on JIT function by name" << std::endl
-	<< "!lnjit <address>    - Get mapping of JIT function entry and name" << std::endl
+	<< "!lnjit <address>    - Displays JIT symbols at or near given address" << std::endl
 	<< "!dump               - Get mapping of JIT function entry and name" << std::endl
 	<< std::endl);
 }
