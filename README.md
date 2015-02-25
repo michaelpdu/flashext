@@ -1,5 +1,7 @@
 # flashext
 
+**For experience, you could get release build from Output/Release, and don't forget to install VS2012 redistribution before using it.**
+
 ## Flash Debug Extensions Usage
 
 	!help               - Get these help information
