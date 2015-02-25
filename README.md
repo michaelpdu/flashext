@@ -1,6 +1,6 @@
 # flashext
 
-## Flash Debug Extensions Usage:
+## Flash Debug Extensions Usage
 
 	!help               - Get these help information
 	!base <address>     - Set base address of flash player
@@ -12,8 +12,8 @@
 
 *refer to code for detailed information*
 
-## Example(CVE-2015-0311):
-### Break at module loading of flash player add-on, and load flashext.
+## Example(CVE-2015-0311)
+### Break at module loading of flash player add-on, and load flashext
 
 	ModLoad: 10000000 1111e000   C:\WINDOWS\system32\Macromed\Flash\Flash32_16_0_0_257.ocx
 	eax=00000000 ebx=00000000 ecx=05570000 edx=7c90e514 esi=00000000 edi=00000000
@@ -23,12 +23,12 @@
 	7c90e514 c3              ret
 	1:022> .load flashext
 
-### According to previous address, set the base.
+### According to previous address, set the base
 
 	1:022> !base 10000000
 	Set base address: 10000000
 
-### Trace JIT.
+### Trace JIT
 
 	1:022> !tjit
 	Prepare to trace JIT
