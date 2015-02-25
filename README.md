@@ -10,7 +10,7 @@
 	!lnjit <address>    - Displays JIT symbols at or near given address
 	!dump               - Get mapping of JIT function entry and name
 
-refer to code for detailed information
+*refer to code for detailed information*
 
 ## Example(CVE-2015-0311):
 ### Break at module loading of flash player add-on, and load flashext.
@@ -58,7 +58,7 @@ refer to code for detailed information
 	JIT Entry: 6a18fce, Method Name: catch for/52142316823181123423632234
 	JIT Entry: 6a18d84, Method Name: catch for/521423742387123423632234
 
-Note: Due to JITed characters, the entry address could be changed next time.
+*Note: Due to JITed characters, the entry address could be changed next time.*
 
 ### Set breakpoint at JITed entry
 
