@@ -10,6 +10,12 @@
 #include <sstream>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/format.hpp>
+#include "boost/algorithm/string.hpp"
+#include <boost/algorithm/string/regex.hpp>
+
+// virtual alloc block size
+#define VB_SIZE_THRESHOLD 0x7E000
 
 namespace md
 {
@@ -18,11 +24,14 @@ FPDebugEvent::FPDebugEvent(void)
 	: m_refCount(0)
 	, m_uiParseHit(0)
 	, m_bResetHardcodeBP(false)
+    , m_addrLoadBytesEntry(0)
+    , m_findLoadBytesEntry(false)
 	, m_cc(NULL)
 	, m_dbgAdv(NULL)
 	, m_dbgCtrl(NULL)
 	, m_dbgData(NULL)
     , m_dbgClient(NULL)
+	, m_offsetRtlFreeHeap(0)
 {
 }
 
@@ -32,7 +41,7 @@ FPDebugEvent::~FPDebugEvent(void)
 
 bool FPDebugEvent::initialize()
 {
-	m_cc = ControlCentre::getInstance();
+	m_cc = CC;
 	if (!m_cc) {
 		LOG_ERROR("[FPDebugEvent] Cannot get control centre");
 		return false;
@@ -42,6 +51,8 @@ bool FPDebugEvent::initialize()
 	m_dbgCtrl = m_cc->getDbgCtrl();
 	m_dbgData = m_cc->getDbgData();
     m_dbgClient = m_cc->getDbgClient();
+
+	CC->getDbgSym()->GetOffsetByName("ntdll!RtlFreeHeap", &m_offsetRtlFreeHeap);
 
 	return true;
 }
@@ -64,15 +75,15 @@ bool FPDebugEvent::finalize()
 void FPDebugEvent::addHardcodeBreakpoints()
 {
 	//// set breakpoint ResolveMethodInfo
-	//LOG_TRACE("Set breakpoint at ResolveMethodInfo\n");
-	//IDebugBreakpoint *bpMethodID = Utility::setBreakpoint(HookUtility::getInstance()->getAddrResolveMethodInfo());
+	//LOG_TRACE("Set breakpoint at ResolveMethodInfo");
+	//IDebugBreakpoint *bpMethodID = Utility::setBp(HU->getAddrResolveMethodInfo());
 
 	//// set breakpoint VerifyJIT
-	//LOG_TRACE("Set breakpoint at VerifyJIT\n");
-	//IDebugBreakpoint *bpVerifyJIT = Utility::setBreakpoint(HookUtility::getInstance()->getAddrVerifyJIT());
+	//LOG_TRACE("Set breakpoint at VerifyJIT");
+	//IDebugBreakpoint *bpVerifyJIT = Utility::setBp(HU->getAddrVerifyJIT());
 
-	LOG_TRACE("Set breakpoint at SetJIT\n");
-	IDebugBreakpoint *bpSetJIT = Utility::setBreakpoint(HookUtility::getInstance()->getAddrSetJIT());
+	LOG_TRACE("Set breakpoint at SetJIT");
+	IDebugBreakpoint *bpSetJIT = Utility::setBp(HU->getAddrSetJIT());
 }
 
 //void FPDebugEvent::handleResolveMethodInfo()
@@ -80,7 +91,7 @@ void FPDebugEvent::addHardcodeBreakpoints()
 //	CONTEXT ctx;
 //	if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
 //	{
-//		LOG_ERROR("[BP Handler][MethodID] Get thread context{1} failed\n");
+//		LOG_ERROR("[BP Handler][MethodID] Get thread context{1} failed");
 //		return ;
 //	} 
 //
@@ -94,13 +105,13 @@ void FPDebugEvent::addHardcodeBreakpoints()
 //	do {
 //		CONTEXT ctx;
 //		if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx))) {
-//			LOG_ERROR("[BP Handler][VerifyJIT] Get thread context failed\n");
+//			LOG_ERROR("[BP Handler][VerifyJIT] Get thread context failed");
 //			break;
 //		}
 //		DWORD methodInfo = ctx.Esi;
 //		unsigned int buf[4] = {0};
 //		if (S_OK != m_dbgData->ReadVirtual(ctx.Esi, buf, sizeof(buf), NULL) ) {
-//			LOG_ERROR("[BP Handler][VerifyJIT] Read virtual addr failed\n");
+//			LOG_ERROR("[BP Handler][VerifyJIT] Read virtual addr failed");
 //			break;
 //		}
 //		DWORD methodEntry = buf[1];
@@ -111,7 +122,7 @@ void FPDebugEvent::addHardcodeBreakpoints()
 //			DWORD cstBpIndex = 0, cstBpMindex = 0;
 //			m_cc->getNumericBpInfo(cstBpIndex, cstBpMindex);
 //			if (MappingHelper::fakeName(cstBpIndex, cstBpMindex) == m_cc->getName(methodEntry)) {
-//				Utility::setBreakpoint(methodEntry, DEBUG_BREAKPOINT_ENABLED | DEBUG_BREAKPOINT_ADDER_ONLY);
+//				Utility::setBp(methodEntry, DEBUG_BREAKPOINT_ENABLED | DEBUG_BREAKPOINT_ADDER_ONLY);
 //			}
 //		}
 //	} while(0);
@@ -121,15 +132,15 @@ void FPDebugEvent::addHardcodeBreakpoints()
 
 void FPDebugEvent::handleSetJIT()
 {
-	LOG_TRACE("Handle SetJIT\n");
+	LOG_TRACE("Handle SetJIT");
 	if (!m_cc->checkPreviousModification()) {
 		if (!m_cc->modifyControlFlow()) {
-			LOG_ERROR("Modify control flow failed\n");
+			LOG_ERROR("Modify control flow failed");
 		} else {
-			LOG_TRACE("Modify control flow successfully\n");
+			LOG_TRACE("Modify control flow successfully");
 		}
 	} else {
-		LOG_TRACE("Find previous modification\n");
+		LOG_TRACE("Find previous modification");
 	}
 
 	//106d7e80 8b4c2408        mov     ecx,dword ptr [esp+8] ss:0023:020dcdd0=05d25d9d
@@ -154,56 +165,56 @@ void FPDebugEvent::handleSetJIT()
 		"p;p;p;p;p;p;p;p;p;p;p;p",
 		DEBUG_EXECUTE_DEFAULT) )
 	{
-		LOG_ERROR("Failed to execute \'p;p;p;p;p;p;p;p;p;p;p;p\'\n");
+		LOG_ERROR("Failed to execute \'p;p;p;p;p;p;p;p;p;p;p;p\' ");
 		return;
 	}
+
 	CONTEXT ctx;
 	if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
 	{
-		LOG_ERROR("Failed to get thread context, code and mi\n");
+		LOG_ERROR("Failed to get thread context, code and mi");
 		return;
 	}
 	LOG_TRACE("Method Info: " << std::hex << ctx.Esi
-		<< ", Entry Code: " << std::hex << ctx.Ecx << std::endl);
+		<< ", Entry Code: " << std::hex << ctx.Ecx);
 
 	ULONG64 addrStr = 0;
     ULONG sizeStr = 0;
 	if (!ReadMemory(ctx.Eax+8,&addrStr,4,NULL)) {
-		LOG_ERROR("Failed to read memory, address of method name\n");
+		LOG_ERROR("Failed to read memory, address of method name");
 		return;
 	}
 
 	if (0 == addrStr) {
-		LOG_DEBUG("Process intern string\n");
+		LOG_DEBUG("Process intern string");
         
         // read intern string
         ULONG64 addrInternStr = 0;
         if (!ReadMemory(ctx.Eax+0xC,&addrInternStr,4,NULL)) {
-            LOG_ERROR("Failed to read memory, address of intern string\n");
+            LOG_ERROR("Failed to read memory, address of intern string");
             return;
         }
         if (0 == addrInternStr) {
-            LOG_DEBUG("Intern string address is NULL\n");
+            LOG_DEBUG("Intern string address is NULL");
             return;
         }
 
         // read flags
         ULONG64 bitsAndFlags = 0;
         if (!ReadMemory(ctx.Eax+0x14,&bitsAndFlags,4,NULL)) {
-            LOG_ERROR("Failed to read memory, bits and flags\n");
+            LOG_ERROR("Failed to read memory, bits and flags");
             return;
         }
 
         if (0x04 != bitsAndFlags) {
-            LOG_DEBUG("Intern string flags != 0x04, flags: " << bitsAndFlags
-                << std::endl);
+            LOG_DEBUG("Intern string flags != 0x04, flags: " << bitsAndFlags);
             return;
         }
 
         // read method name in intern string
         DWORD internBuf[5] = {0};
         if (!ReadMemory(addrInternStr,&internBuf,sizeof(internBuf),NULL)) {
-            LOG_ERROR("Failed to read memory, intern string\n");
+            LOG_ERROR("Failed to read memory, intern string");
             return;
         }
 
@@ -211,39 +222,261 @@ void FPDebugEvent::handleSetJIT()
 	}
 
     if (!ReadMemory(ctx.Eax+0x10,&sizeStr,4,NULL)) {
-        LOG_ERROR("Failed to read memory, size of method name\n");
+        LOG_ERROR("Failed to read memory, size of method name");
         return;
     }
 
 	LOG_TRACE("Method name, address: " << std::hex << addrStr
-        << "size: " << std::hex << sizeStr << std::endl);
+        << "size: " << std::hex << sizeStr);
 
 	char* pMethodName = new(std::nothrow) char[sizeStr+1];
 	if (NULL == pMethodName) {
-		LOG_ERROR("Failed to allocate memory for method name\n");
+		LOG_ERROR("Failed to allocate memory for method name");
 		return ;
 	}
 	memset(pMethodName, '\0', sizeStr+1);
 	if (!ReadMemory(addrStr,pMethodName,sizeStr,NULL)) {
-		LOG_ERROR("Failed to read memory, method name\n");
+		LOG_ERROR("Failed to read memory, method name");
 		return;
 	}
-	LOG_MSG("JIT Entry: " << std::hex << ctx.Ecx
-		<< ", Method Name: " << pMethodName << std::endl);
+	LOG_MSG("JIT Entry: " << std::hex << ctx.Ecx << ", Method Name: " << pMethodName);
 
 	// save method_name & entry
     m_cc->insertData(ctx.Ecx, pMethodName);
 
 	// set breakpoint
-	std::string bpMethodName, bpCmd;
-	if (m_cc->getCustomBpStatus()
-        && m_cc->getCustomBpMethodName(bpMethodName, bpCmd)
-		&& 0 == strcmp(bpMethodName.c_str(), pMethodName) )
+	std::string bpMethodName(pMethodName), bpCmd;
+    if (CC->hitJitBp(bpMethodName, bpCmd))
 	{
-		LOG_DEBUG("Find custom breakpoint\n");
-		Utility::setBreakpoint(ctx.Ecx, DEBUG_BREAKPOINT_ENABLED, bpCmd);
+		LOG_DEBUG("Find JIT breakpoint, name = " << bpMethodName << ", cmd = " << bpCmd);
+        if ( CC->getExportEmbeddedStatus() && bpMethodName == CSTR_LOADBYTES_FUN_NAME) {
+            m_addrLoadBytesEntry = ctx.Ecx;
+        }
+
+		IDebugBreakpoint* bp = Utility::setBp(ctx.Ecx, DEBUG_BREAKPOINT_ENABLED, bpCmd);
+        CC->insertBpList(bpMethodName, bp);
+	}
+
+    delete pMethodName;
+    pMethodName = NULL;
+}
+
+void FPDebugEvent::handleAnalyzeEmbedded()
+{
+    LOG_INFO("Enter into handleAnalyzeEmbedded");
+    CONTEXT ctx;
+    if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
+    {
+        LOG_ERROR("[handleAnalyzeEmbedded] Failed to get thread context");
+        return;
+    }
+
+    // poi(ESP+4): address of embedded content
+    // poi(ESP+8): length of embedded content
+    DWORD espData[3] = {0};
+    if (!ReadMemory(ctx.Esp,&espData,sizeof(espData),NULL)) {
+        LOG_ERROR("[handleAnalyzeEmbedded] Failed to read memory, ESP data");
+        return;
+    }
+
+    std::string cmd = str(boost::format(".writemem c:\\embedded_0x%08x_0x%x.bin %x L%x") % espData[1] % espData[2] % espData[1] % espData[2]);
+    LOG_INFO("Execute CMD: " << cmd );
+    if (S_OK != CC->getDbgCtrl()->Execute(DEBUG_OUTCTL_THIS_CLIENT, cmd.c_str(), DEBUG_EXECUTE_ECHO)) {
+        LOG_ERROR("[handleAnalyzeEmbedded] Failed to execute command: " << cmd );
+    } else {
+        LOG_INFO("Export Successfully!");
+    }
+}
+
+
+void FPDebugEvent::callbackAcroMalloc()
+{
+	CONTEXT ctx;
+	if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
+	{
+		LOG_ERROR("[callbackAcroMalloc] Failed to get thread context");
+		return;
+	}
+
+	// EDI: malloc size
+	// EAX: allocated address
+	if (ctx.Edi > VB_SIZE_THRESHOLD) {
+		LOG_DEBUG(boost::format("Allocate virtual block, size = 0x%x, address = 0x%08x") % ctx.Edi % ctx.Eax);
+
+		VB_INFO vb;
+		vb.addr = ctx.Eax;
+		vb.size = ctx.Edi;
+
+		// 
+		auto iterVBInfo = m_mapVB.find(ctx.Eax);
+		if (iterVBInfo == m_mapVB.end())
+		{
+			m_mapVB[ctx.Eax] = vb;
+		}
+
+		//
+		auto iter = m_histAllocVBSize.find(ctx.Edi);
+		if ( iter == m_histAllocVBSize.end() ) {
+			m_histAllocVBSize[ctx.Edi] = 1;
+		} else {
+			m_histAllocVBSize[ctx.Edi] ++;
+		}
+
+		m_preAllocVBSize = ctx.Edi;
+		m_preAllocVBAddr = ctx.Eax;
 	}
 }
+
+void FPDebugEvent::callbackAcroMcp()
+{
+	CONTEXT ctx;
+	if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
+	{
+		LOG_ERROR("[callbackAcroMcp] Failed to get thread context");
+		return;
+	}
+
+	// poi(ESP)  : dest 
+	// poi(ESP+4): src
+	// poi(ESP+8): size
+
+	DWORD espData[3] = {0};
+	if (!ReadMemory(ctx.Esp,&espData,sizeof(espData),NULL)) {
+		LOG_ERROR("Failed to read memory, ESP data");
+		return;
+	}
+	if (espData[2] > VB_SIZE_THRESHOLD) {
+		LOG_DEBUG(boost::format("Copy memory from [0x%08x] to [0x%08x], size = 0x%x") % espData[1] % espData[0] % espData[2]);
+
+		//
+		auto iter = m_histMcpSrc.find(espData[1]);
+		if ( iter == m_histMcpSrc.end() ) {
+			m_histMcpSrc[espData[1]] = 1;
+		} else {
+			m_histMcpSrc[espData[1]] ++;
+		}
+
+		//
+		auto iterVB1 = m_mapVB.find(espData[0]); // search node by dest
+		if (iterVB1 != m_mapVB.end()) {
+			auto iterVB2 = m_mapVB.find(espData[1]); // search node by src
+			if (iterVB2 != m_mapVB.end()) { // find copy chain, update mcpSrc and mcpSize
+				iterVB1->second.mcpSrc = iterVB2->second.mcpSrc; 
+				iterVB1->second.mcpSize = (iterVB1->second.mcpSize < iterVB2->second.mcpSize) ? iterVB1->second.mcpSize : iterVB2->second.mcpSize;
+			} else {
+				iterVB1->second.mcpSrc = espData[1];
+				iterVB1->second.mcpSize = espData[2];
+			}
+		}
+
+		m_preMcpDest = espData[0];
+		m_preMcpSrc = espData[1];
+		m_preMcpSize = espData[2];
+	}
+}
+
+void FPDebugEvent::callbackRtlFreeHeap()
+{
+	CONTEXT ctx;
+	if (S_OK != m_dbgAdv->GetThreadContext(&ctx, sizeof(ctx)))
+	{
+		LOG_ERROR("[callbackRtlFreeHeap] Failed to get thread context");
+		return;
+	}
+
+	// poi(ESP+4): heap handle 
+	// poi(ESP+8): flags
+	// poi(ESP+C): heap base
+
+	DWORD espData[3] = {0};
+	if (!ReadMemory(ctx.Esp+4,&espData,sizeof(espData),NULL)) {
+		LOG_ERROR("Failed to read memory, ESP data");
+		return;
+	}
+
+	if ((espData[2]-20) % 0x10000 == 0) {
+		auto iter = m_mapVB.find(espData[2]);
+		if ( iter != m_mapVB.end() ) {
+			m_mapVB.erase(iter);
+		}
+	}
+}
+
+void FPDebugEvent::dumpSprayResult()
+{
+	if (0 == m_histAllocVBSize.size() && 0 == m_histMcpSrc.size()) {
+		LOG_INFO("Cannot find HEAP SPRAY behavior!");
+		return;
+	}
+	
+	DWORD totalSize = 0;
+	LOG_INFO("\n===== Histogram for Allocated Virtual Block SIZE =====");
+	for (auto iter = m_histAllocVBSize.begin(); iter != m_histAllocVBSize.end(); ++iter)
+	{
+		totalSize += iter->first * iter->second;
+		LOG_INFO(boost::format(">>> Size = 0x%08x, Count = %d") % iter->first % iter->second);
+	}
+
+	LOG_INFO("\n===== Histogram for memcpy from SOURCE =====");
+	for (auto iter = m_histMcpSrc.begin(); iter != m_histMcpSrc.end(); ++iter)
+	{
+		LOG_INFO(boost::format(">>> Source = 0x%08x, Count = %d") % iter->first % iter->second);
+	}
+
+	LOG_INFO("\n===== Statistic for Virtual Blocks =====");
+	totalSize = 0;
+	boost::unordered::unordered_map<DWORD, DWORD> histVBSizeCount;
+	boost::unordered::unordered_map<DWORD, DWORD> histMcpSrcCount;
+	boost::unordered::unordered_map<DWORD, DWORD> histMcpSizeCount;
+	for (auto iter = m_mapVB.begin(); iter != m_mapVB.end(); ++iter)
+	{
+		// calculate total size
+		totalSize += iter->second.size;
+
+		// hist for virtual block size
+		if ( histVBSizeCount.find(iter->second.size) == histVBSizeCount.end() ) {
+			histVBSizeCount[iter->second.size] = 1;
+		} else {
+			histVBSizeCount[iter->second.size]++;
+		}
+
+		// hist for memory copy source
+		if ( histMcpSrcCount.find(iter->second.mcpSrc) == histMcpSrcCount.end() ) {
+			histMcpSrcCount[iter->second.mcpSrc] = 1;
+		} else {
+			histMcpSrcCount[iter->second.mcpSrc]++;
+		}
+
+		// hist for memory copy size
+		if ( histMcpSizeCount.find(iter->second.mcpSize) == histMcpSizeCount.end() ) {
+			histMcpSizeCount[iter->second.mcpSize] = 1;
+		} else {
+			histMcpSizeCount[iter->second.mcpSize]++;
+		}
+	}
+
+	LOG_INFO(boost::format(">>> Total Virtual Block Size = %dM") % (totalSize/1048576));
+	for (auto iter = histVBSizeCount.begin(); iter != histVBSizeCount.end(); ++iter)
+	{
+		LOG_INFO(boost::format(">>> Size = 0x%x, Count = %d") % iter->first % iter->second);
+	}
+	LOG_INFO("");
+	for (auto iter = histMcpSrcCount.begin(); iter != histMcpSrcCount.end(); ++iter)
+	{
+		LOG_INFO(boost::format(">>> MCP Source = 0x%08x, Count = %d") % iter->first % iter->second);
+	}
+	LOG_INFO("");
+	for (auto iter = histMcpSizeCount.begin(); iter != histMcpSizeCount.end(); ++iter)
+	{
+		LOG_INFO(boost::format(">>> MCP Size = 0x%x, Count = %d") % iter->first % iter->second);
+	}
+}
+
+
+
+
+
+
 
 STDMETHODIMP FPDebugEvent::QueryInterface(
         THIS_
@@ -294,91 +527,115 @@ STDMETHODIMP FPDebugEvent::Breakpoint(
         )
 {
 	do {
-		//ULONG 
-		//StackTrace (
-		//ULONG FramePointer,
-		//ULONG StackPointer,
-		//ULONG ProgramCounter,
-		//PEXTSTACKTRACE StackFrames,
-		//ULONG Frames
-		//);
-
-		//ULONG framePointer = 0, stackPointer = 0, programCounter = 0;
-		//EXTSTACKTRACE stackFrames;
-		//ULONG frame = StackTrace(framePointer, stackPointer, programCounter, &stackFrames, 20);
-		//if (frame >= 9)
-		//	break;
-
 		ULONG64 offset = 0;
 		if (S_OK == Bp->GetOffset(&offset)) {
-			LOG_TRACE("Enter into bp handler, offset = " << std::hex << offset << std::endl);
+            LOG_TRACE("Enter into bp handler, offset = " << std::hex << offset);
+            
+            ULONG flags = 0;
+            Bp->GetFlags(&flags);
+            LOG_TRACE("Breakpoint flags = " << flags);
 
-			if (HookUtility::getInstance()->getAddrParse() == offset) {
+            std::string name;
+            bool isJitBp = false;
+            if (CC->getFuncNameFromBpList(Bp, name)) {
+                isJitBp = true;
+                LOG_TRACE("It's JIT breakpoint, name = " << name );
+                ULONG id = 0;
+                Bp->GetId(&id);
+                LOG_INFO("[Breakpoint] name = \'" << name << "\', id = " << id << ", offset = 0x" << std::hex << offset );
+            } else {
+                LOG_TRACE("It's not JIT breakpoint");
+            }
+
+            // Flash Player Hook Points
+			if (HU->getAddrParse() == offset) {
 				m_uiParseHit++;
-				LOG_TRACE("Breakpoint(AbcParser::parse) hits " << m_uiParseHit << std::endl);
+				LOG_TRACE("Breakpoint(AbcParser::parse) hits = " << m_uiParseHit << ", m_bResetHardcodeBP = " << m_bResetHardcodeBP);
 				if (m_uiParseHit > 2 && !m_bResetHardcodeBP) {
 					addHardcodeBreakpoints();
-					//if (!m_cc->modifyControlFlow()) {
-					//	LOG_ERROR("Modify control flow failed\n");
-					//} else {
-
-					//}
 					m_bResetHardcodeBP = true;
 				}
-			} /*else if (HookUtility::getInstance()->getAddrResolveMethodInfo() == offset) {
-				handleResolveMethodInfo();
 				break;
-			} else if (HookUtility::getInstance()->getAddrVerifyJIT() == offset) {
-				handleVerifyJIT();
-				break;
-			} */else if (HookUtility::getInstance()->getAddrSetJIT() == offset) {
+			} else if (HU->getAddrSetJIT() == offset) {
 				handleSetJIT();
                 if (m_cc->getDbgFlags() & md::DBG_FLAGS_SET_JIT) {
+                    LOG_TRACE("[SetJIT] Return DEBUG_STATUS_BREAK");
 				    return DEBUG_STATUS_BREAK;
                 }
+                LOG_TRACE("[SetJIT] Break out");
 				break;
-			} else {
+			} else if (HU->getAddrAnalyzeEmbedded() == offset) {
+                if (m_findLoadBytesEntry) {
+                    handleAnalyzeEmbedded();
+                }
+                break;
+            } else if (CC->getExportEmbeddedStatus() && m_addrLoadBytesEntry == offset) {
+                LOG_INFO("Find entry for loadBytes");
+                m_findLoadBytesEntry = true;
+                break;
+            }
+
+            // AcroRd Hook Points
+            else if (HU->getAddrAcroMalloc() == offset) {
+				callbackAcroMalloc();
+				break;
+			} else if (HU->getAddrAcroMcp1() == offset || HU->getAddrAcroMcp2() == offset) {
+				callbackAcroMcp();
+				break;
+			} else if (m_offsetRtlFreeHeap == offset) {
+				callbackRtlFreeHeap();
+				break;
+			}
+            
+            
+            else {
+                
+                if (isJitBp)
+                {
+                    char cmdBuf[MAX_PATH] = {0};
+                    ULONG cmdLen = 0;
+                    if (S_OK == Bp->GetCommand(cmdBuf, MAX_PATH, &cmdLen)) {
+                        LOG_TRACE("CMD content: " << cmdBuf);
+                        std::string argInput(cmdBuf);
+                        std::vector<std::string> cmdInfo;
+                        boost::algorithm::trim(argInput);
+                        boost::algorithm::split_regex(cmdInfo,argInput,boost::regex(";"));
+
+                        for (auto iter = cmdInfo.begin(); iter != cmdInfo.end(); ++iter)
+                        {
+                            LOG_TRACE("CMD: " << *iter );
+                        }
+                        
+                        //CC->getDbgCtrl()->Execute();
+                        if ("g" == *cmdInfo.end() || "gc" == *cmdInfo.end()) {
+                            LOG_TRACE("Return DEBUG_STATUS_GO when custom cmd ends with \'g\' or \'gc\'");
+                            return DEBUG_STATUS_GO;
+                        } else {
+                            LOG_TRACE("Return DEBUG_STATUS_BREAK when find JIT breakpoint");
+                            return DEBUG_STATUS_BREAK;
+                        }
+
+                    } else {
+                        LOG_TRACE("Return DEBUG_STATUS_BREAK when find JIT breakpoint and get command failed");
+                        return DEBUG_STATUS_BREAK;
+                    }
+                }
+
 				IDebugClient* dbgClient = NULL;
 				if (S_OK == Bp->GetAdder(&dbgClient) && dbgClient)
 				{
-					//LOG_TRACE("Get Debug Client = " << dbgClient << ", Main Client = " << m_dbgClient << std::endl);
-
-					////char buf[1024] = {0};
-					////ULONG outSize = 0;
-					////if (S_OK == Bp->GetCommand(buf, 1023, &outSize)) {
-					////	LOG_TRACE("CMD: %s\n",buf);
-					////}
-
-					if (m_dbgClient-dbgClient == 1) {
-					//	LOG_TRACE("This Breakpoint is set in current Debug Client\n");
-					//	if (m_cc->getTraceStatus()) {
-					//		unsigned count = m_cc->queryBpCount(Bp);
-					//		LOG_TRACE("count = " << count << std::endl);
-					//		if (!count) {
-					//			m_cc->removeBp(Bp);
-					//		} else {
-					//			std::string name = m_cc->getName(offset);
-					//			LOG_INFO("[JIT TRACE] " << name << ", offset = "
-					//				<< std::hex << offset << std::endl);
-					//		} 
-					//		break;
-					//	}
-
-					//	LOG_TRACE("Return break!\n");
-						return DEBUG_STATUS_BREAK;
+					LOG_TRACE("Get Current BP Client = " << dbgClient << ", Main Client = " << m_dbgClient);
+					if (dbgClient != m_dbgClient) {
+                        LOG_TRACE("Return DEBUG_STATUS_NO_CHANGE");
+						return DEBUG_STATUS_NO_CHANGE;
 					}
-
-					return DEBUG_STATUS_NO_CHANGE;
 				}
-				else
-				{
-					LOG_ERROR("Get Debug Client Failed\n");
-				}
+				break;
 			}
 		}
-
 	} while(0);
 
+    LOG_TRACE("Return DEBUG_STATUS_GO");
 	return DEBUG_STATUS_GO;
 }
 
@@ -446,11 +703,11 @@ STDMETHODIMP FPDebugEvent::LoadModule(
         __in ULONG TimeDateStamp
         )
 {
-	//LOG_TRACE("ModuleLoad: %p %p, Module Name: %s\n",
+	//LOG_TRACE("ModuleLoad: %p %p, Module Name: %s",
 	//	BaseOffset, BaseOffset+ModuleSize, ModuleName);
 
 	//if (boost::starts_with(ModuleName,"Flash")) {
-	//	HookUtility::getInstance()->setBaseAddress(BaseOffset);
+	//	HU->setBaseAddress(BaseOffset);
 
 	//	return DEBUG_STATUS_BREAK;
 	//}

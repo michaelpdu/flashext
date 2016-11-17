@@ -5,11 +5,15 @@ EXPORTS
     ExtensionApiVersion
     base
     tjit
-	wtjit
+    wtjit
     bpjit
+    bljit
     lnjit
+    go
     dump
     loglevel
-	test
+    test
     debug
     help
+    ahia
+    export_embedded

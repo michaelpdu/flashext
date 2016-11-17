@@ -1,5 +1,7 @@
 #include "Logger.h"
 #include "wdbgexts.h"
+#include <iomanip>
+#include <ctime>
 
 namespace md
 {
@@ -43,7 +45,34 @@ namespace md
 	void Logger::output(const std::string& msg, LOGLEVEL level)
 	{
 		if (level >= m_uiLevel) {
-			dprintf(msg.c_str());
+            std::string levelFlag;
+            switch (level)
+            {
+            case LOGLEVEL_ERROR:
+                levelFlag = "[ERROR] ";
+                break;
+            case LOGLEVEL_WARN:
+                levelFlag = "[WARN] ";
+                break;
+            case LOGLEVEL_INFO:
+                levelFlag = "[INFO] ";
+                break;
+            case LOGLEVEL_MSG:
+                levelFlag = "[MSG] ";
+                break;
+            case LOGLEVEL_DEBUG:
+                levelFlag = "[DEBUG] ";
+                break;
+            case LOGLEVEL_TRACE:
+                levelFlag = "[TRACE] ";
+                break;
+            }
+
+            std::stringstream ss;
+            auto t = std::time(nullptr);
+            auto tm = *std::localtime(&t);
+            ss << "[" << std::put_time(&tm, "%d/%m/%Y %H-%M-%S") << "]" << levelFlag << msg << std::endl;
+			dprintf(ss.str().c_str());
 		}
 	}
 

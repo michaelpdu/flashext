@@ -1,10 +1,12 @@
 #pragma once
 #include "dbgeng.h"
+#include <boost/unordered_map.hpp>
 
 namespace md
 {
 
 class ControlCentre;
+struct VB_INFO;
 
 class FPDebugEvent :
 	public IDebugEventCallbacks
@@ -15,9 +17,6 @@ public:
 
 	bool initialize();
 	bool finalize();
-
-	void addHardcodeBreakpoints();
-	void handleSetJIT();
 
 public:
 	// IUnknown.
@@ -128,17 +127,45 @@ public:
         __in ULONG64 Argument
         );
 		
+
+public:
+	void addHardcodeBreakpoints();
+	void handleSetJIT();
+    void handleAnalyzeEmbedded();
+
+	void dumpSprayResult();
+
+private:
+	void callbackAcroMalloc();
+	void callbackAcroMcp();
+	void callbackRtlFreeHeap();
+
 private:
 	unsigned int m_refCount;
 
 	unsigned int m_uiParseHit;
 	bool m_bResetHardcodeBP;
 
+    // Export Embedded
+    ULONG64 m_addrLoadBytesEntry;
+    bool m_findLoadBytesEntry;
+
 	ControlCentre* m_cc;
 	IDebugAdvanced* m_dbgAdv;
 	IDebugControl* m_dbgCtrl;
 	IDebugDataSpaces* m_dbgData;
     IDebugClient* m_dbgClient;
+
+	// AcroRd Heap Spray
+	DWORD m_preAllocVBSize; // previous allocated size of virtual block
+	DWORD m_preAllocVBAddr; // previous allocated address of virtual block
+	DWORD m_preMcpSrc; // previous source address in memcpy
+	DWORD m_preMcpDest; // previous destination address in memcpy
+	DWORD m_preMcpSize; // previous size in memcpy
+	boost::unordered::unordered_map<DWORD, DWORD> m_histAllocVBSize; // histogram for allocated virtual block size
+	boost::unordered::unordered_map<DWORD, DWORD> m_histMcpSrc; // histogram for memcpy from source
+	boost::unordered::unordered_map<DWORD, VB_INFO> m_mapVB;
+	ULONG64 m_offsetRtlFreeHeap;
 };
 
 }

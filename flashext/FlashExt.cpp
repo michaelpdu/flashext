@@ -8,6 +8,7 @@
 
 #include "ControlCentre.h"
 #include "HookUtility.h"
+#include "Utility.h"
 #include "Logger.h"
 #include "boost/algorithm/string.hpp"
 #include <boost/algorithm/string/regex.hpp>
@@ -47,14 +48,13 @@ BOOL WINAPI DllMain(HINSTANCE hModule, DWORD dwReason, PVOID pReserved)
 	if (DLL_PROCESS_ATTACH == dwReason) {
 
 	} else if (DLL_PROCESS_DETACH == dwReason) {
-		md::ControlCentre* ctrCentre = md::ControlCentre::getInstance();
-		if (!ctrCentre) {
+		if (!CC) {
 			return false;
 		}
-		if (!ctrCentre->finalize()) {
+		if (!CC->finalize()) {
 			return false;
 		}
-		ctrCentre->releaseInstance();
+		CC->releaseInstance();
 		md::Logger::getInstance()->releaseInstance();
 	}
 	return TRUE;
@@ -96,11 +96,10 @@ VOID WDBGAPI WinDbgExtensionDllInit (PWINDBG_EXTENSION_APIS lpExtensionApis, USH
 	ExtensionApis = *lpExtensionApis;
 
 	md::Logger::getInstance()->setLevel(LOGLEVEL_INFO);
-	md::ControlCentre* ctrCentre = md::ControlCentre::getInstance();
-	if (!ctrCentre) {
+	if (!CC) {
 		return ;
 	}
-	if (!ctrCentre->initialize()) {
+	if (!CC->initialize()) {
 		return ;
 	}
 
@@ -123,13 +122,25 @@ DECLARE_API (help)
 {
 	LOG_INFO("Flash Debug Extensions Usage:" << std::endl
 	<< "!help               - Get these help information" << std::endl
+	<< "!loglevel <level>   - Set loglevel in extension, default value is LOGLEVEL_INFO(3)" << std::endl
+	<< "                    - Other level:" << std::endl
+	<< "                        LOGLEVEL_TRACE = 0" << std::endl
+	<< "                        LOGLEVEL_DEBUG = 1" << std::endl
+	<< "                        LOGLEVEL_MSG   = 2" << std::endl
+	<< "!dump <arg>         - arg is one of following options:" << std::endl 
+	<< "                      method_data - Get mapping of JIT function entry and name" << std::endl
+	<< "                      spray_info  - Get spray information about AcroRd" << std::endl
+	<< "--------------------------------------------------------------------------------" << std::endl
 	<< "!base <address>     - Set base address of flash player" << std::endl
 	<< "!tjit               - Trace JIT functions" << std::endl
 	<< "!bpjit <method_name> [<condition>]" << std::endl
     << "                    - Set breakpoint on JIT function by name" << std::endl
+    << "!go                 - Prepare environment and go" << std::endl
+    << "!bljit              - List breakpoints in JIT list" << std::endl
 	<< "!lnjit <address>    - Displays JIT symbols at or near given address" << std::endl
-	<< "!dump               - Get mapping of JIT function entry and name" << std::endl
-	<< std::endl);
+    << "!export_embedded    - Export embedded content" << std::endl
+	<< "--------------------------------------------------------------------------------" << std::endl
+	<< "!ahia               - Analyze Heapspray in AcroRd" << std::endl);
 }
 
 /***********************************************************
@@ -146,10 +157,10 @@ DECLARE_API (help)
 ***********************************************************/
 DECLARE_API (base)
 {
-	//LOG_WARN("[base] Not Implemented!\n");
+	//LOG_WARN("[base] Not Implemented!");
 	ULONG64 addr = GetExpression(args);
-	LOG_INFO("Set base address: " << std::hex << addr << std::endl);
-	md::HookUtility::getInstance()->setBaseAddress(addr);
+	LOG_INFO("Set base address: " << std::hex << addr);
+	HU->setBaseAddress(addr);
 }
 
 /***********************************************************
@@ -166,19 +177,18 @@ DECLARE_API (base)
 ***********************************************************/
 DECLARE_API (tjit)
 {
-	md::ControlCentre* cc = md::ControlCentre::getInstance();
-	if (!cc) {
+	if (!CC) {
 		LOG_ERROR("Failed to get control center");
 	}
-    LOG_INFO("Prepare to trace JIT" << std::endl);
-    DWORD dbgFlags = cc->getDbgFlags();
+    LOG_INFO("Prepare to trace JIT");
+    DWORD dbgFlags = CC->getDbgFlags();
     if (!dbgFlags) {
-        LOG_DEBUG("Set log level to LOGLEVEL_MSG" << std::endl);
+        LOG_DEBUG("Set log level to LOGLEVEL_MSG");
 	    md::Logger::getInstance()->setLevel(LOGLEVEL_MSG);
     } else {
-        LOG_DEBUG("In debug mode, debug flags:" << dbgFlags << std::endl);
+        LOG_DEBUG("In debug mode, debug flags:" << dbgFlags);
     }
-	cc->setFirstBp();
+	CC->prepareEnv();
 }
 
 /***********************************************************
@@ -195,14 +205,14 @@ DECLARE_API (tjit)
 ***********************************************************/
 DECLARE_API (lnjit)
 {
-    //LOG_WARN("Not Implemented!\n");
+    //LOG_WARN("Not Implemented!");
     ULONG64 addr = GetExpression(args);
-    LOG_INFO("parameter: " << std::hex << addr << std::endl);
-    md::ControlCentre* cc = md::ControlCentre::getInstance();
-    if (!cc) {
+    LOG_INFO("parameter: " << std::hex << addr);
+
+    if (!CC) {
         LOG_ERROR("Failed to get control center");
     }
-    cc->printNearSymbol(addr);
+    CC->printNearSymbol(addr);
 }
 
 
@@ -220,15 +230,19 @@ DECLARE_API (lnjit)
 ***********************************************************/
 DECLARE_API (wtjit)
 {
-	LOG_WARN("Not Implemented!\n");
-	//md::ControlCentre::getInstance()->
+	LOG_WARN("Not Implemented!");
 }
 
 DECLARE_API (loglevel)
 {
-	//LOG_WARN("[loglevel] Not Implemented!\n");
+	//LOG_WARN("[loglevel] Not Implemented!");
 	DWORD level = GetExpression(args);
-	LOG_INFO("Set loglevel: " << level << std::endl);
+	LOG_INFO("Set loglevel: " << md::Utility::logLevel2Str((LOGLEVEL)level));
+	CC->setDbgFlags(md::DBG_FLAGS_SET_LOGLEVEL);
+	if ( level < LOGLEVEL_TRACE || level > LOGLEVEL_OFF ) {
+		level = LOGLEVEL_INFO;
+	}
+
 	md::Logger::getInstance()->setLevel((LOGLEVEL)level);
 }
 
@@ -246,33 +260,60 @@ DECLARE_API (loglevel)
 ***********************************************************/
 DECLARE_API (bpjit)
 {
-	LOG_INFO("parameter: " << args << std::endl);
+	LOG_INFO("parameter: " << args);
 
     std::string argInput(args);
     std::vector<std::string> argInfo;
     boost::algorithm::trim(argInput);
-    boost::algorithm::split_regex(argInfo,argInput,boost::regex("[\s]*-->[\s]*"));
+    boost::algorithm::split_regex(argInfo,argInput,boost::regex("-->"));
+    LOG_TRACE("Args length: " << argInfo.size());
     if (argInfo.size() > 2) {
         LOG_ERROR("invalid arguments, check usage");
         return;
     }
 
+    LOG_TRACE("Method Name: " << argInfo[0] );
+
     std::string cmd;
     if (argInfo.size() == 2) {
         cmd = argInfo[1];
+        LOG_TRACE("CMD: " << cmd );
     }
 
-	md::ControlCentre* cc = md::ControlCentre::getInstance();
-	if (!cc) {
+	if (!CC) {
 		LOG_ERROR("Failed to get control center");
 	}
-    if (cc->getCustomBpStatus() && cc->SetCustomBpByCache(argInfo[0],cmd)) {
+    if (CC->getCustomBpStatus() && CC->SearchCustomBpInCache(argInfo[0],cmd)) {
         return;
     }
 
-    cc->setCustomBpInfo(argInfo[0],cmd);
-    cc->setFirstBp();
+    CC->setCustomBpInfo(argInfo[0],cmd);
+    //CC->prepareEnv();
 }
+
+
+DECLARE_API (bljit)
+{
+    if (!CC) {
+        LOG_ERROR("Failed to get control center");
+    }
+    CC->listJitBp();
+}
+
+DECLARE_API (go)
+{
+    if (!CC) {
+        LOG_ERROR("Failed to get control center");
+    }
+    CC->prepareEnv();
+
+    LOG_INFO("Execute !go");
+    if (S_OK != CC->getDbgCtrl()->Execute(DEBUG_OUTCTL_THIS_CLIENT, "g", DEBUG_EXECUTE_ECHO)) {
+        LOG_ERROR("[GO] Failed to execute command: !go");
+    }
+}
+
+
 
 /***********************************************************
 * !dump
@@ -288,23 +329,87 @@ DECLARE_API (bpjit)
 ***********************************************************/
 DECLARE_API (dump)
 {
-	md::ControlCentre::getInstance()->dumpMethodData();
+	LOG_INFO("parameter: " << args);
+	if ( 0 == stricmp(args, "method_data") ) {
+		CC->dumpMethodData();
+	} else if ( 0 == stricmp(args, "spray_info") ) {
+		CC->dumpSprayResult();
+	}
 }
 
 DECLARE_API (test)
 {
 	//std::string output;
-	//md::ControlCentre::getInstance()->getOutput(output);
+	//CC->getOutput(output);
 	//LOG_TRACE(output);
 }
 
 DECLARE_API (debug)
 {
-    LOG_INFO("parameter: " << args << std::endl);
+    LOG_INFO("parameter: " << args);
     if (0 == stricmp(args, "setjit")) {
         md::Logger::getInstance()->setLevel(LOGLEVEL_DEBUG);
-        md::ControlCentre::getInstance()->setDbgFlags(md::DBG_FLAGS_SET_JIT);
+        CC->setDbgFlags(md::DBG_FLAGS_SET_JIT);
     } else {
-        LOG_WARN("DON'T SUPPOT THIS DEBUG ARGS\n");
+        LOG_WARN("DON'T SUPPOT THIS DEBUG ARGS");
     }
 }
+
+
+
+
+
+
+
+
+/***********************************************************
+* !ahia
+*
+* Purpose: analyze heapspray behavior in AcroRd
+*
+*  Usage:
+*     !ahia
+*
+*  Return Values:
+*     N/A
+*
+***********************************************************/
+DECLARE_API (ahia)
+{
+	if (!CC) {
+		LOG_ERROR("Failed to get control center");
+	}
+	LOG_INFO("Prepare to analyze heapspray behavior in AcroRd");
+	DWORD dbgFlags = CC->getDbgFlags();
+	if (!dbgFlags) {
+		LOG_DEBUG("Set log level to LOGLEVEL_MSG");
+		md::Logger::getInstance()->setLevel(LOGLEVEL_MSG);
+	} else {
+		LOG_DEBUG("In debug mode, debug flags:" << dbgFlags);
+	}
+	CC->prepareEnv4AHIA();
+}
+
+
+/***********************************************************
+* !export_embedded
+*
+* Purpose: export embedded flash
+*
+*  Usage:
+*     !export_embedded
+*
+*  Return Values:
+*     N/A
+*
+***********************************************************/
+DECLARE_API (export_embedded)
+{
+    LOG_INFO("Prepare to export embedded content!");
+    CC->prepareEnv4ExportEmbedded();
+}
+
+
+
+
+

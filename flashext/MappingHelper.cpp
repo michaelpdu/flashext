@@ -56,7 +56,7 @@ namespace md
 	//	//}
 	//	auto iter = m_mapMinfo2FakeName.find(info);
 	//	if (iter == m_mapMinfo2FakeName.end()) {
-	//		LOG_TRACE("Cannot find info: " << std::hex << info << std::endl);
+	//		LOG_TRACE("Cannot find info: " << std::hex << info);
 	//		return false;
 	//	}
 	//	m_mapFakeName2Entry.insert(std::make_pair(iter->second, entry));
@@ -76,7 +76,7 @@ namespace md
 	{
 		auto iter = m_unmapMethodName2Entry.find(name);
 		if (iter == m_unmapMethodName2Entry.end()) {
-			LOG_TRACE("Cannot find entry by name: " << name << std::endl);
+			LOG_TRACE("Cannot find entry in cache by name: " << name);
 			return 0;
 		}
 		return iter->second;
@@ -86,7 +86,7 @@ namespace md
 	{
 		auto iter = m_unmapEntry2MethodName.find(entry);
 		if (iter == m_unmapEntry2MethodName.end()) {
-			LOG_TRACE("Cannot find name by entry: " << std::hex << entry << std::endl);
+			LOG_TRACE("Cannot find name by entry: " << std::hex << entry);
 			return "NotFound";
 		}
 		return iter->second;
@@ -96,11 +96,11 @@ namespace md
 	{
 		LOG_INFO("Dump Method Info Data\n"
 			<< "Item Count = " << m_unmapEntry2MethodName.size() << std::endl
-			<< "EntryAddr\tMethodName\n");
+			<< "EntryAddr\tMethodName");
 		for (auto iter = m_unmapEntry2MethodName.begin();
 			iter != m_unmapEntry2MethodName.end(); ++iter)
 		{
-			LOG_INFO(std::hex << iter->first << "\t" << iter->second << std::endl);
+			LOG_INFO(std::hex << iter->first << "\t" << iter->second);
 		}
 	}
 
@@ -112,10 +112,10 @@ namespace md
             iter != m_mapEntry2MethodName.end(); ++iter)
         {
             //LOG_INFO("Entry: " << std::hex << iter->first
-            //    << ", Method Name: " << iter->second << std::endl);
+            //    << ", Method Name: " << iter->second);
             if (iter->first == addr) {
                 LOG_INFO("Match JIT Method, entry: " << std::hex << addr
-                    << ", method name: " << iter->second << std::endl);
+                    << ", method name: " << iter->second);
                 return;
             }
             if (iter->first < addr) {
@@ -125,7 +125,7 @@ namespace md
             } else {
                 LOG_INFO("Find Near Method, address: " << std::hex << nearAddr
                     << "+0x" << std::hex << (addr-nearAddr)
-                    << ", method name: " << nearMethodName << std::endl);
+                    << ", method name: " << nearMethodName);
                 return;
             }
         }
