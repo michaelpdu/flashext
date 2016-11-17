@@ -4,7 +4,7 @@
 #include <imagehlp.h>
 #include <wdbgexts.h>
 #include <dbgeng.h>
-#include <extsfns.h>
+//#include <extsfns.h>
 
 #include "FPDebugEvent.h"
 #include "MappingHelper.h"
